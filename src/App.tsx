@@ -1,59 +1,87 @@
-// import { useState } from 'react'
-// import reactLogo from './assets/react.svg'
-// import viteLogo from '/vite.svg'
-// import './App.css'
+// // import { useState } from 'react'
+// // import reactLogo from './assets/react.svg'
+// // import viteLogo from '/vite.svg'
+// // import './App.css'
+
+// // function App() {
+// //   const [count, setCount] = useState(0)
+
+// //   return (
+// //     <>
+// //       <div>
+// //         <a href="https://vite.dev" target="_blank">
+// //           <img src={viteLogo} className="logo" alt="Vite logo" />
+// //         </a>
+// //         <a href="https://react.dev" target="_blank">
+// //           <img src={reactLogo} className="logo react" alt="React logo" />
+// //         </a>
+// //       </div>
+// //       <h1>Vite + React</h1>
+// //       <div className="card">
+// //         <button onClick={() => setCount((count) => count + 1)}>
+// //           count is {count}
+// //         </button>
+// //         <p>
+// //           Edit <code>src/App.tsx</code> and save to test HMR
+// //         </p>
+// //       </div>
+// //       <p className="read-the-docs">
+// //         Click on the Vite and React logos to learn more
+// //       </p>
+// //     </>
+// //   )
+// // }
+
+// // export default App
+
+// // src/App.tsx
+// import React from 'react';
+// import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+// import Home from './pages/Home';
+// import Dashboard from './pages/Dashboard';
+// import Lend from './pages/Lend';
+// import Borrow from './pages/Borrow';
 
 // function App() {
-//   const [count, setCount] = useState(0)
-
 //   return (
-//     <>
-//       <div>
-//         <a href="https://vite.dev" target="_blank">
-//           <img src={viteLogo} className="logo" alt="Vite logo" />
-//         </a>
-//         <a href="https://react.dev" target="_blank">
-//           <img src={reactLogo} className="logo react" alt="React logo" />
-//         </a>
-//       </div>
-//       <h1>Vite + React</h1>
-//       <div className="card">
-//         <button onClick={() => setCount((count) => count + 1)}>
-//           count is {count}
-//         </button>
-//         <p>
-//           Edit <code>src/App.tsx</code> and save to test HMR
-//         </p>
-//       </div>
-//       <p className="read-the-docs">
-//         Click on the Vite and React logos to learn more
-//       </p>
-//     </>
-//   )
+//     <Router>
+//       <Routes>
+//         <Route path="/" element={<Home />} />
+//         <Route path="/dashboard" element={<Dashboard />} />
+//         <Route path="/lend" element={<Lend />} />
+//         <Route path="/borrow" element={<Borrow />} />
+//       </Routes>
+//     </Router>
+//   );
 // }
 
-// export default App
+// export default App;
 
 // src/App.tsx
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Home from './pages/Home';
-import Dashboard from './pages/Dashboard';
-import Lend from './pages/Lend';
-import Borrow from './pages/Borrow';
+import React from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import MainLayout from "./components/layouts/MainLayout";
+import Home from "./pages/Home";
+import Dashboard from "./pages/Dashboard";
+import Lend from "./pages/Lend";
+import Borrow from "./pages/Borrow";
+import Test from "./pages/Test";
 
-function App() {
+const App: React.FC = () => {
   return (
-    <Router>
+    <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/lend" element={<Lend />} />
-        <Route path="/borrow" element={<Borrow />} />
+        <Route path="/" element={<MainLayout><Home /></MainLayout>} />
+        <Route path="/dashboard" element={<MainLayout><Dashboard /></MainLayout>} />
+        <Route path="/lend" element={<MainLayout><Lend /></MainLayout>} />
+        <Route path="/borrow" element={<MainLayout><Borrow /></MainLayout>} />
+        <Route path="/test" element={<Test />} />
       </Routes>
-    </Router>
+    </BrowserRouter>
   );
-}
+};
 
 export default App;
+
+
 

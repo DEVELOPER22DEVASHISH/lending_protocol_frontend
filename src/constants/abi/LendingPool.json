@@ -1,4 +1,4 @@
-[
+ [
     {
       "inputs": [
         {
@@ -628,12 +628,12 @@
       "name": "reserves",
       "outputs": [
         {
-          "internalType": "contract LToken",
+          "internalType": "address",
           "name": "lToken",
           "type": "address"
         },
         {
-          "internalType": "contract DebtToken",
+          "internalType": "address",
           "name": "debtToken",
           "type": "address"
         },

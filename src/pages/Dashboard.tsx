@@ -1,220 +1,275 @@
-import React, { useEffect, useState } from "react";
-import Card from "../components/common/Card";
-import Button from "../components/common/Button";
-import { ASSETS } from "../constants/assets";
-import { useContract } from "../hooks/useAssetsContract";
+import React, { useEffect, useState, useCallback } from "react";
+import { Contract, formatUnits, parseUnits } from "ethers";
+import { useAccount } from "wagmi";
 import { useEthersSigner } from "../hooks/useEthersSigner";
-import { useCollateralManager } from "../hooks/useCollateralManager";
-import { useLendingPool } from "../hooks/useLendingPool";
-import { formatUnits, parseUnits } from "ethers";
+import { ASSETS } from "../constants/assets";
 import ERC20Abi from "../constants/abi/ERC20.json";
+import Button from "../components/common/Button";
+import Modal from "../components/common/Modal";
+import { ERROR_MESSAGES, getErrorMessage } from "../components/shared/errorHandling";
 
 const assetKeys = Object.keys(ASSETS) as Array<keyof typeof ASSETS>;
 
 const Dashboard: React.FC = () => {
   const signer = useEthersSigner();
-  const collateralManager = useCollateralManager();
-  const lendingPool = useLendingPool();
+  const { address: userAddress } = useAccount();
 
-  const [userAddress, setUserAddress] = useState<string>("");
+  // UI state
   const [deposits, setDeposits] = useState<{ [symbol: string]: string }>({});
   const [borrows, setBorrows] = useState<{ [symbol: string]: string }>({});
-  const [healthFactor, setHealthFactor] = useState<string>("∞");
+  const [healthFactor, setHealthFactor] = useState<string>("N/A");
   const [loading, setLoading] = useState(false);
 
-  // For modal/simple input
-  const [selectedAsset, setSelectedAsset] = useState<keyof typeof ASSETS>("dai");
-  const [amount, setAmount] = useState<string>("");
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalTitle, setModalTitle] = useState<string | undefined>();
+  const [modalMessage, setModalMessage] = useState<string | undefined>();
+  const [modalError, setModalError] = useState(false);
 
-  // Get user address from signer
-  useEffect(() => {
-    const getAddress = async () => {
-      if (signer) {
-        const addr = await signer.getAddress();
-        setUserAddress(addr);
+  // Deposit/withdraw/borrow/repay UI
+  const [depositAsset, setDepositAsset] = useState<keyof typeof ASSETS>("dai");
+  const [depositAmount, setDepositAmount] = useState<string>("");
+  const [withdrawAsset, setWithdrawAsset] = useState<keyof typeof ASSETS>("dai");
+  const [withdrawAmount, setWithdrawAmount] = useState<string>("");
+  const [borrowAsset, setBorrowAsset] = useState<keyof typeof ASSETS>("usdt");
+  const [borrowAmount, setBorrowAmount] = useState<string>("");
+  const [repayAsset, setRepayAsset] = useState<keyof typeof ASSETS>("usdt");
+  const [repayAmount, setRepayAmount] = useState<string>("");
+
+  // Helper: create a dynamic contract instance
+  const getContract = useCallback(
+    (address: string, abi: any) => {
+      if (!signer || !address) return null;
+      try {
+        return new Contract(address, abi, signer);
+      } catch (err) {
+        console.error("Failed to create contract instance:", err);
+        return null;
       }
-    };
-    getAddress();
-  }, [signer]);
+    },
+    [signer]
+  );
 
-  // Fetch balances
-  useEffect(() => {
+  // Fetch user balances for all assets
+  const fetchBalances = useCallback(async () => {
     if (!userAddress || !signer) return;
     setLoading(true);
+    const depositsTemp: { [symbol: string]: string } = {};
+    const borrowsTemp: { [symbol: string]: string } = {};
 
-    const fetchBalances = async () => {
-      const depositsTemp: { [symbol: string]: string } = {};
-      const borrowsTemp: { [symbol: string]: string } = {};
+    for (const key of assetKeys) {
+      const asset = ASSETS[key];
+      const lToken = getContract(asset.lToken.address, asset.lToken.abi);
+      const debtToken = getContract(asset.debtToken.address, asset.debtToken.abi);
 
-      for (const key of assetKeys) {
-        const asset = ASSETS[key];
-        const assetLTokenContract = useContract(asset.lToken.address, asset.lToken.abi);
-        const assetDebtTokenContract = useContract(asset.debtToken.address, asset.debtToken.abi);
-
-        try {
-          let lBal = 0n;
-          if (assetLTokenContract) {
-            lBal = await assetLTokenContract.balanceOf(userAddress);
-          }
-          depositsTemp[asset.symbol] = formatUnits(lBal, asset.decimals);
-
-          let dBal = 0n;
-          if (assetDebtTokenContract) {
-            dBal = await assetDebtTokenContract.balanceOf(userAddress);
-          }
-          borrowsTemp[asset.symbol] = formatUnits(dBal, asset.decimals);
-        } catch (err) {
-          depositsTemp[asset.symbol] = "0.00";
-          borrowsTemp[asset.symbol] = "0.00";
-        }
-      }
-
-      setDeposits(depositsTemp);
-      setBorrows(borrowsTemp);
-      setLoading(false);
-    };
-
-    fetchBalances();
-  }, [userAddress, signer]);
-
-  // Calculate health factor using CollateralManager for the first asset pair as an example
-  useEffect(() => {
-    if (!userAddress || !signer || !collateralManager) return;
-
-    const calculateHealth = async () => {
       try {
-        // Example: use DAI as collateral, USDC as debt
-        const collateralKey = assetKeys[0];
-        const debtKey = assetKeys[1];
-        const collateralAsset = ASSETS[collateralKey];
-        const debtAsset = ASSETS[debtKey];
+        let lBal = 0n;
+        if (lToken) lBal = await lToken.balanceOf(userAddress);
+        depositsTemp[asset.symbol] = formatUnits(lBal, asset.decimals);
 
-        const assetLTokenContract = useContract(collateralAsset.lToken.address, collateralAsset.lToken.abi);
-        const assetDebtTokenContract = useContract(debtAsset.debtToken.address, debtAsset.debtToken.abi);
-
-        let collateralAmount = 0n;
-        let debtAmount = 0n;
-        if (assetLTokenContract) {
-          collateralAmount = await assetLTokenContract.balanceOf(userAddress);
-        }
-        if (assetDebtTokenContract) {
-          debtAmount = await assetDebtTokenContract.balanceOf(userAddress);
-        }
-
-        const healthy = await collateralManager.isHealthy(
-          userAddress,
-          collateralAsset.address,
-          collateralAmount,
-          debtAsset.address,
-          debtAmount
-        );
-        setHealthFactor(healthy ? "Healthy" : "At Risk");
-      } catch {
-        setHealthFactor("N/A");
+        let dBal = 0n;
+        if (debtToken) dBal = await debtToken.balanceOf(userAddress);
+        borrowsTemp[asset.symbol] = formatUnits(dBal, asset.decimals);
+      } catch (err) {
+        depositsTemp[asset.symbol] = "0.00";
+        borrowsTemp[asset.symbol] = "0.00";
       }
-    };
+    }
 
-    calculateHealth();
-  }, [userAddress, signer, deposits, borrows, collateralManager]);
+    setDeposits(depositsTemp);
+    setBorrows(borrowsTemp);
+    setLoading(false);
+  }, [userAddress, signer, getContract]);
+
+  useEffect(() => {
+    fetchBalances();
+  }, [userAddress, signer, fetchBalances]);
+
+  // Dummy health factor (expand as needed)
+  useEffect(() => {
+    // You can implement a real health factor by calling your protocol's method
+    setHealthFactor("N/A");
+  }, [deposits, borrows]);
 
   // ========== ACTIONS ==========
 
-  // Approve asset for LendingPool
+  // Approve asset for LendingPool (generic for deposit, repay, etc.)
   const handleApprove = async (assetKey: keyof typeof ASSETS, amt: string) => {
     const asset = ASSETS[assetKey];
-    const erc20 = useContract(asset.address, ERC20Abi);
+    const erc20 = getContract(asset.address, ERC20Abi);
     if (!erc20 || !userAddress) return;
+    setLoading(true);
+    setModalOpen(true);
+    setModalError(false);
+    setModalTitle("Approval in Progress");
+    setModalMessage(ERROR_MESSAGES.walletRequest);
     try {
       const tx = await erc20.approve(
-        lendingPool.target, // ethers v6: .target is contract address
+        asset.lToken.address, // Or your LendingPool address if needed
         parseUnits(amt, asset.decimals)
       );
       await tx.wait();
-      alert(`${asset.symbol} approved for deposit/repay!`);
+      setModalTitle("Approval Successful");
+      setModalMessage(`${asset.symbol} approved!`);
+      setModalError(false);
     } catch (err: any) {
-      alert("Approval failed: " + (err?.reason || err?.message || err));
+      setModalTitle("Approval Failed");
+      setModalMessage(getErrorMessage(err));
+      setModalError(true);
     }
+    setLoading(false);
   };
 
   // Deposit
   const handleDeposit = async () => {
-    const asset = ASSETS[selectedAsset];
+    const asset = ASSETS[depositAsset];
+    const lendingPool = getContract(import.meta.env.VITE_LENDING_POOL_ADDRESS, asset.lToken.abi);
     if (!lendingPool || !userAddress) return;
+    if (!depositAmount || parseFloat(depositAmount) <= 0) {
+      setModalError(true);
+      setModalTitle("Invalid Amount");
+      setModalMessage(ERROR_MESSAGES.zeroAmount);
+      setModalOpen(true);
+      return;
+    }
+    setLoading(true);
+    setModalOpen(true);
+    setModalError(false);
+    setModalTitle("Deposit in Progress");
+    setModalMessage(ERROR_MESSAGES.walletRequest);
     try {
-      setLoading(true);
-      await handleApprove(selectedAsset, amount);
+      await handleApprove(depositAsset, depositAmount);
       const tx = await lendingPool.deposit(
         asset.address,
-        parseUnits(amount, asset.decimals)
+        parseUnits(depositAmount, asset.decimals)
       );
+      setModalTitle("Deposit Submitted");
+      setModalMessage("Waiting for confirmation...");
       await tx.wait();
-      alert(`Deposited ${amount} ${asset.symbol}!`);
-      setAmount("");
+      setModalTitle("Deposit Successful");
+      setModalMessage(`Deposited ${depositAmount} ${asset.symbol}!`);
+      setModalError(false);
+      setDepositAmount("");
+      await fetchBalances();
     } catch (err: any) {
-      alert("Deposit failed: " + (err?.reason || err?.message || err));
+      setModalTitle("Deposit Failed");
+      setModalMessage(getErrorMessage(err));
+      setModalError(true);
     }
     setLoading(false);
   };
 
   // Withdraw
   const handleWithdraw = async () => {
-    const asset = ASSETS[selectedAsset];
+    const asset = ASSETS[withdrawAsset];
+    const lendingPool = getContract(import.meta.env.VITE_LENDING_POOL_ADDRESS, asset.lToken.abi);
     if (!lendingPool || !userAddress) return;
+    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
+      setModalError(true);
+      setModalTitle("Invalid Amount");
+      setModalMessage(ERROR_MESSAGES.zeroAmount);
+      setModalOpen(true);
+      return;
+    }
+    setLoading(true);
+    setModalOpen(true);
+    setModalError(false);
+    setModalTitle("Withdraw in Progress");
+    setModalMessage(ERROR_MESSAGES.walletRequest);
     try {
-      setLoading(true);
       const tx = await lendingPool.withdraw(
         asset.address,
-        parseUnits(amount, asset.decimals)
+        parseUnits(withdrawAmount, asset.decimals)
       );
+      setModalTitle("Withdraw Submitted");
+      setModalMessage("Waiting for confirmation...");
       await tx.wait();
-      alert(`Withdrew ${amount} ${asset.symbol}!`);
-      setAmount("");
+      setModalTitle("Withdraw Successful");
+      setModalMessage(`Withdrew ${withdrawAmount} ${asset.symbol}!`);
+      setModalError(false);
+      setWithdrawAmount("");
+      await fetchBalances();
     } catch (err: any) {
-      alert("Withdraw failed: " + (err?.reason || err?.message || err));
+      setModalTitle("Withdraw Failed");
+      setModalMessage(getErrorMessage(err));
+      setModalError(true);
     }
     setLoading(false);
   };
 
-  // Borrow (uses selectedAsset as debt, DAI as collateral for demo)
+  // Borrow
   const handleBorrow = async () => {
-    const asset = ASSETS[selectedAsset];
-    const collateralAsset = ASSETS["dai"]; // You can make this user-selectable
+    const asset = ASSETS[borrowAsset];
+    const lendingPool = getContract(import.meta.env.VITE_LENDING_POOL_ADDRESS, asset.debtToken.abi);
     if (!lendingPool || !userAddress) return;
+    if (!borrowAmount || parseFloat(borrowAmount) <= 0) {
+      setModalError(true);
+      setModalTitle("Invalid Amount");
+      setModalMessage(ERROR_MESSAGES.zeroAmount);
+      setModalOpen(true);
+      return;
+    }
+    setLoading(true);
+    setModalOpen(true);
+    setModalError(false);
+    setModalTitle("Borrow in Progress");
+    setModalMessage(ERROR_MESSAGES.walletRequest);
     try {
-      setLoading(true);
-      const collateralAmount = parseUnits("1", collateralAsset.decimals); // For demo: 1 DAI as collateral
-      await handleApprove(selectedAsset, amount);
       const tx = await lendingPool.borrow(
         asset.address,
-        parseUnits(amount, asset.decimals),
-        collateralAsset.address,
-        collateralAmount
+        parseUnits(borrowAmount, asset.decimals)
       );
+      setModalTitle("Borrow Submitted");
+      setModalMessage("Waiting for confirmation...");
       await tx.wait();
-      alert(`Borrowed ${amount} ${asset.symbol}!`);
-      setAmount("");
+      setModalTitle("Borrow Successful");
+      setModalMessage(`Borrowed ${borrowAmount} ${asset.symbol}!`);
+      setModalError(false);
+      setBorrowAmount("");
+      await fetchBalances();
     } catch (err: any) {
-      alert("Borrow failed: " + (err?.reason || err?.message || err));
+      setModalTitle("Borrow Failed");
+      setModalMessage(getErrorMessage(err));
+      setModalError(true);
     }
     setLoading(false);
   };
 
   // Repay
   const handleRepay = async () => {
-    const asset = ASSETS[selectedAsset];
+    const asset = ASSETS[repayAsset];
+    const lendingPool = getContract(import.meta.env.VITE_LENDING_POOL_ADDRESS, asset.debtToken.abi);
     if (!lendingPool || !userAddress) return;
+    if (!repayAmount || parseFloat(repayAmount) <= 0) {
+      setModalError(true);
+      setModalTitle("Invalid Amount");
+      setModalMessage(ERROR_MESSAGES.zeroAmount);
+      setModalOpen(true);
+      return;
+    }
+    setLoading(true);
+    setModalOpen(true);
+    setModalError(false);
+    setModalTitle("Repay in Progress");
+    setModalMessage(ERROR_MESSAGES.walletRequest);
     try {
-      setLoading(true);
-      await handleApprove(selectedAsset, amount);
+      await handleApprove(repayAsset, repayAmount);
       const tx = await lendingPool.repay(
         asset.address,
-        parseUnits(amount, asset.decimals)
+        parseUnits(repayAmount, asset.decimals)
       );
+      setModalTitle("Repay Submitted");
+      setModalMessage("Waiting for confirmation...");
       await tx.wait();
-      alert(`Repaid ${amount} ${asset.symbol}!`);
-      setAmount("");
+      setModalTitle("Repay Successful");
+      setModalMessage(`Repaid ${repayAmount} ${asset.symbol}!`);
+      setModalError(false);
+      setRepayAmount("");
+      await fetchBalances();
     } catch (err: any) {
-      alert("Repay failed: " + (err?.reason || err?.message || err));
+      setModalTitle("Repay Failed");
+      setModalMessage(getErrorMessage(err));
+      setModalError(true);
     }
     setLoading(false);
   };
@@ -223,22 +278,28 @@ const Dashboard: React.FC = () => {
 
   return (
     <div>
+      <Modal
+        open={modalOpen}
+        title={modalTitle}
+        message={modalMessage}
+        onClose={() => setModalOpen(false)}
+        isError={modalError}
+      />
       <h1 className="text-3xl font-bold mb-6">Your Dashboard</h1>
       <div className="grid md:grid-cols-2 gap-6 mb-8">
-        <Card title="Your Deposits">
-          <div className="space-y-3">
-            {assetKeys.map((key) => (
-              <div key={key} className="flex justify-between items-center p-3 bg-gray-50 rounded">
-                <span className="font-medium">{ASSETS[key].symbol} Supplied</span>
-                <span className="font-mono">{deposits[ASSETS[key].symbol] || "0.00"}</span>
-              </div>
-            ))}
-          </div>
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-xl font-semibold mb-3">Your Deposits</h2>
+          {assetKeys.map((key) => (
+            <div key={key} className="flex justify-between items-center p-2">
+              <span>{ASSETS[key].symbol}:</span>
+              <span>{deposits[ASSETS[key].symbol] || "0.00"}</span>
+            </div>
+          ))}
           <form className="mt-4 flex gap-2 items-center" onSubmit={e => { e.preventDefault(); handleDeposit(); }}>
             <select
               className="border rounded p-1"
-              value={selectedAsset}
-              onChange={e => setSelectedAsset(e.target.value as keyof typeof ASSETS)}
+              value={depositAsset}
+              onChange={e => setDepositAsset(e.target.value as keyof typeof ASSETS)}
             >
               {assetKeys.map(k => (
                 <option key={k} value={k}>{ASSETS[k].symbol}</option>
@@ -248,38 +309,24 @@ const Dashboard: React.FC = () => {
               type="number"
               min="0"
               step="any"
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
+              value={depositAmount}
+              onChange={e => setDepositAmount(e.target.value)}
               className="border rounded p-1 w-24"
               placeholder="Amount"
             />
             <Button type="submit" disabled={loading}>Deposit</Button>
-            <Button type="button" primary={false} disabled={loading} onClick={handleWithdraw}>Withdraw</Button>
-          </form>
-        </Card>
-        <Card title="Your Borrows">
-          <div className="space-y-3">
-            {assetKeys.map((key) => (
-              <div key={key} className="flex justify-between items-center p-3 bg-gray-50 rounded">
-                <span className="font-medium">{ASSETS[key].symbol} Borrowed</span>
-                <span className="font-mono">{borrows[ASSETS[key].symbol] || "0.00"}</span>
-              </div>
-            ))}
-            <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-              <span className="font-medium">Health Factor</span>
-              <span className={`font-mono ${
-                healthFactor === "Healthy" ? "text-green-500" :
-                healthFactor === "At Risk" ? "text-red-500" : ""
-              }`}>
-                {healthFactor}
-              </span>
-            </div>
-          </div>
-          <form className="mt-4 flex gap-2 items-center" onSubmit={e => { e.preventDefault(); handleBorrow(); }}>
+            <Button
+              type="button"
+              primary={false}
+              disabled={loading}
+              onClick={handleWithdraw}
+            >
+              Withdraw
+            </Button>
             <select
               className="border rounded p-1"
-              value={selectedAsset}
-              onChange={e => setSelectedAsset(e.target.value as keyof typeof ASSETS)}
+              value={withdrawAsset}
+              onChange={e => setWithdrawAsset(e.target.value as keyof typeof ASSETS)}
             >
               {assetKeys.map(k => (
                 <option key={k} value={k}>{ASSETS[k].symbol}</option>
@@ -289,15 +336,73 @@ const Dashboard: React.FC = () => {
               type="number"
               min="0"
               step="any"
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
+              value={withdrawAmount}
+              onChange={e => setWithdrawAmount(e.target.value)}
               className="border rounded p-1 w-24"
               placeholder="Amount"
             />
-            <Button type="submit" disabled={loading}>Borrow More</Button>
-            <Button type="button" primary={false} disabled={loading} onClick={handleRepay}>Repay</Button>
           </form>
-        </Card>
+        </div>
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-xl font-semibold mb-3">Your Borrows</h2>
+          {assetKeys.map((key) => (
+            <div key={key} className="flex justify-between items-center p-2">
+              <span>{ASSETS[key].symbol}:</span>
+              <span>{borrows[ASSETS[key].symbol] || "0.00"}</span>
+            </div>
+          ))}
+          <div className="flex justify-between items-center p-2">
+            <span>Health Factor:</span>
+            <span>{healthFactor}</span>
+          </div>
+          <form className="mt-4 flex gap-2 items-center" onSubmit={e => { e.preventDefault(); handleBorrow(); }}>
+            <select
+              className="border rounded p-1"
+              value={borrowAsset}
+              onChange={e => setBorrowAsset(e.target.value as keyof typeof ASSETS)}
+            >
+              {assetKeys.map(k => (
+                <option key={k} value={k}>{ASSETS[k].symbol}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={borrowAmount}
+              onChange={e => setBorrowAmount(e.target.value)}
+              className="border rounded p-1 w-24"
+              placeholder="Amount"
+            />
+            <Button type="submit" disabled={loading}>Borrow</Button>
+            <Button
+              type="button"
+              primary={false}
+              disabled={loading}
+              onClick={handleRepay}
+            >
+              Repay
+            </Button>
+            <select
+              className="border rounded p-1"
+              value={repayAsset}
+              onChange={e => setRepayAsset(e.target.value as keyof typeof ASSETS)}
+            >
+              {assetKeys.map(k => (
+                <option key={k} value={k}>{ASSETS[k].symbol}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={repayAmount}
+              onChange={e => setRepayAmount(e.target.value)}
+              className="border rounded p-1 w-24"
+              placeholder="Amount"
+            />
+          </form>
+        </div>
       </div>
       {loading && <div className="text-gray-500">Processing transaction...</div>}
     </div>

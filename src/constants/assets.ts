@@ -1,5 +1,5 @@
-import AssetsLTokenAbi from "../constants/abi/AssetsLToken.json";
-import AssetsDebtTokenAbi from "../constants/abi/AssetsDebtToken.json";
+import AssetsLTokenAbi from "../constants/abi/CommonAssetsLToken.json";
+import AssetsDebtTokenAbi from "../constants/abi/CommonAssetsDebtToken.json";
 
 export const ASSETS = {
   dai: {

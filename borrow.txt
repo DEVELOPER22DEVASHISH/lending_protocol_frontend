@@ -236,3 +236,470 @@
 // };
 
 // export default Borrow;
+
+
+// Dashboard
+// import React, { useEffect, useState, useCallback } from "react";
+// import { Contract, formatUnits, parseUnits } from "ethers";
+// import { useAccount } from "wagmi";
+// import { useEthersSigner } from "../hooks/useEthersSigner";
+// import { ASSETS } from "../constants/assets";
+// import LendingPoolAbi from "../constants/abi/LendingPool.json";
+// import ERC20Abi from "../constants/abi/ERC20.json";
+// import Button from "../components/common/Button";
+// import Modal from "../components/common/Modal";
+// import { ERROR_MESSAGES, getErrorMessage } from "../components/shared/errorHandling";
+
+// const LENDING_POOL_ADDRESS = import.meta.env.VITE_LENDING_POOL_ADDRESS as string;
+// const assetKeys = Object.keys(ASSETS) as Array<keyof typeof ASSETS>;
+
+// const Dashboard: React.FC = () => {
+//   const signer = useEthersSigner();
+//   const { address: userAddress } = useAccount();
+
+//   // LendingPool contract instance
+//   const [lendingPool, setLendingPool] = useState<Contract | null>(null);
+
+//   // UI state
+//   const [deposits, setDeposits] = useState<{ [symbol: string]: string }>({});
+//   const [borrows, setBorrows] = useState<{ [symbol: string]: string }>({});
+//   const [healthFactor, setHealthFactor] = useState<string>("N/A");
+//   const [loading, setLoading] = useState(false);
+
+//   // Transaction parameters
+//   const [depositAsset, setDepositAsset] = useState<keyof typeof ASSETS>("dai");
+//   const [depositAmount, setDepositAmount] = useState("");
+//   const [withdrawAsset, setWithdrawAsset] = useState<keyof typeof ASSETS>("dai");
+//   const [withdrawAmount, setWithdrawAmount] = useState("");
+//   const [borrowAsset, setBorrowAsset] = useState<keyof typeof ASSETS>("usdt");
+//   const [borrowAmount, setBorrowAmount] = useState("");
+//   const [collateralAsset, setCollateralAsset] = useState<keyof typeof ASSETS>("dai");
+//   const [collateralAmount, setCollateralAmount] = useState("");
+//   const [repayAsset, setRepayAsset] = useState<keyof typeof ASSETS>("usdt");
+//   const [repayAmount, setRepayAmount] = useState("");
+
+//   // Modal state
+//   const [modalOpen, setModalOpen] = useState(false);
+//   const [modalTitle, setModalTitle] = useState<string | undefined>();
+//   const [modalMessage, setModalMessage] = useState<string | undefined>();
+//   const [modalError, setModalError] = useState(false);
+
+//   // Collateral allowance for borrow
+//   const [collateralAllowance, setCollateralAllowance] = useState<string>("0");
+
+//   // Initialize LendingPool contract
+//   useEffect(() => {
+//     if (!signer) {
+//       setLendingPool(null);
+//       return;
+//     }
+//     try {
+//       const instance = new Contract(
+//         LENDING_POOL_ADDRESS,
+//         LendingPoolAbi,
+//         signer
+//       );
+//       setLendingPool(instance);
+//     } catch (err) {
+//       setLendingPool(null);
+//     }
+//   }, [signer]);
+
+//   // Fetch balances
+//   const fetchBalances = useCallback(async () => {
+//     if (!userAddress || !signer) return;
+
+//     const depositsTemp: { [symbol: string]: string } = {};
+//     const borrowsTemp: { [symbol: string]: string } = {};
+
+//     for (const key of assetKeys) {
+//       const asset = ASSETS[key];
+//       try {
+//         // LToken balance
+//         const lToken = new Contract(asset.lToken.address, asset.lToken.abi, signer);
+//         const lBal = await lToken.balanceOf(userAddress);
+//         depositsTemp[asset.symbol] = formatUnits(lBal, asset.decimals);
+
+//         // DebtToken balance
+//         const debtToken = new Contract(asset.debtToken.address, asset.debtToken.abi, signer);
+//         const dBal = await debtToken.balanceOf(userAddress);
+//         borrowsTemp[asset.symbol] = formatUnits(dBal, asset.decimals);
+//       } catch {
+//         depositsTemp[asset.symbol] = "0.00";
+//         borrowsTemp[asset.symbol] = "0.00";
+//       }
+//     }
+
+//     setDeposits(depositsTemp);
+//     setBorrows(borrowsTemp);
+//   }, [userAddress, signer]);
+
+//   useEffect(() => {
+//     fetchBalances();
+//   }, [fetchBalances]);
+
+//   // Fetch collateral allowance for borrow
+//   useEffect(() => {
+//     if (!signer || !userAddress || !collateralAsset) return;
+//     const fetchAllowance = async () => {
+//       try {
+//         const erc20 = new Contract(ASSETS[collateralAsset].address, ERC20Abi, signer);
+//         const allowance = await erc20.allowance(userAddress, LENDING_POOL_ADDRESS);
+//         setCollateralAllowance(allowance.toString());
+//       } catch {
+//         setCollateralAllowance("0");
+//       }
+//     };
+//     fetchAllowance();
+//   }, [signer, userAddress, collateralAsset, collateralAmount]);
+
+//   // Common transaction handler
+//   const handleTransaction = async (
+//     action: () => Promise<void>,
+//     successMessage: string
+//   ) => {
+//     setLoading(true);
+//     setModalOpen(true);
+//     setModalError(false);
+//     setModalTitle("Processing Transaction");
+//     setModalMessage(ERROR_MESSAGES.walletRequest);
+
+//     try {
+//       await action();
+//       setModalTitle("Success");
+//       setModalMessage(successMessage);
+//       await fetchBalances();
+//     } catch (err: any) {
+//       setModalError(true);
+//       setModalTitle("Transaction Failed");
+//       setModalMessage(getErrorMessage(err));
+//     } finally {
+//       setLoading(false);
+//     }
+//   };
+
+//   // Deposit action
+//   const handleDeposit = async () => {
+//     if (!lendingPool || !userAddress) return;
+//     const asset = ASSETS[depositAsset];
+//     const amount = parseUnits(depositAmount, asset.decimals);
+
+//     await handleTransaction(async () => {
+//       // Approve ERC20 first
+//       const erc20 = new Contract(asset.address, ERC20Abi, signer);
+//       const approveTx = await erc20.approve(LENDING_POOL_ADDRESS, amount);
+//       await approveTx.wait();
+
+//       // Execute deposit
+//       const depositTx = await lendingPool.deposit(asset.address, amount);
+//       await depositTx.wait();
+//     }, `${depositAmount} ${asset.symbol} deposited successfully!`);
+//     setDepositAmount("");
+//   };
+
+//   // Withdraw action
+//   const handleWithdraw = async () => {
+//     if (!lendingPool || !userAddress) return;
+//     const asset = ASSETS[withdrawAsset];
+//     const amount = parseUnits(withdrawAmount, asset.decimals);
+
+//     await handleTransaction(async () => {
+//       const tx = await lendingPool.withdraw(asset.address, amount);
+//       await tx.wait();
+//     }, `${withdrawAmount} ${asset.symbol} withdrawn successfully!`);
+//     setWithdrawAmount("");
+//   };
+
+//   // Borrow action (with collateral)
+//   const handleBorrow = async () => {
+//     if (!lendingPool || !userAddress) return;
+//     if (!borrowAmount || parseFloat(borrowAmount) <= 0) {
+//       setModalError(true);
+//       setModalTitle("Invalid Borrow Amount");
+//       setModalMessage(ERROR_MESSAGES.zeroAmount);
+//       setModalOpen(true);
+//       return;
+//     }
+//     if (!collateralAmount || parseFloat(collateralAmount) <= 0) {
+//       setModalError(true);
+//       setModalTitle("Invalid Collateral Amount");
+//       setModalMessage(ERROR_MESSAGES.zeroAmount);
+//       setModalOpen(true);
+//       return;
+//     }
+//     if (
+//       BigInt(collateralAllowance || "0") <
+//       parseUnits(collateralAmount, ASSETS[collateralAsset].decimals)
+//     ) {
+//       setModalError(true);
+//       setModalTitle("Allowance Error");
+//       setModalMessage(ERROR_MESSAGES.allowanceError);
+//       setModalOpen(true);
+//       return;
+//     }
+
+//     await handleTransaction(async () => {
+//       const tx = await lendingPool.borrow(
+//         ASSETS[borrowAsset].address,
+//         parseUnits(borrowAmount, ASSETS[borrowAsset].decimals),
+//         ASSETS[collateralAsset].address,
+//         parseUnits(collateralAmount, ASSETS[collateralAsset].decimals)
+//       );
+//       await tx.wait();
+//     }, `${borrowAmount} ${ASSETS[borrowAsset].symbol} borrowed successfully!`);
+//     setBorrowAmount("");
+//     setCollateralAmount("");
+//   };
+
+//   // Approve collateral for borrow
+//   const handleApproveCollateral = async () => {
+//     if (!signer || !userAddress) return;
+//     setLoading(true);
+//     setModalOpen(true);
+//     setModalError(false);
+//     setModalTitle("Approval in Progress");
+//     setModalMessage(ERROR_MESSAGES.walletRequest);
+
+//     try {
+//       const erc20 = new Contract(ASSETS[collateralAsset].address, ERC20Abi, signer);
+//       const tx = await erc20.approve(
+//         LENDING_POOL_ADDRESS,
+//         parseUnits(collateralAmount, ASSETS[collateralAsset].decimals)
+//       );
+//       await tx.wait();
+//       setModalTitle("Approval Successful");
+//       setModalMessage("Collateral approved!");
+//       setModalError(false);
+//       // Refresh allowance
+//       const allowance = await erc20.allowance(userAddress, LENDING_POOL_ADDRESS);
+//       setCollateralAllowance(allowance.toString());
+//     } catch (e: any) {
+//       setModalTitle("Approval Failed");
+//       setModalMessage(getErrorMessage(e));
+//       setModalError(true);
+//     }
+//     setLoading(false);
+//   };
+
+//   // Repay action
+//   const handleRepay = async () => {
+//     if (!lendingPool || !userAddress) return;
+//     const asset = ASSETS[repayAsset];
+//     const amount = parseUnits(repayAmount, asset.decimals);
+
+//     await handleTransaction(async () => {
+//       // Approve ERC20 first
+//       const erc20 = new Contract(asset.address, ERC20Abi, signer);
+//       const approveTx = await erc20.approve(LENDING_POOL_ADDRESS, amount);
+//       await approveTx.wait();
+
+//       // Execute repay
+//       const repayTx = await lendingPool.repay(asset.address, amount);
+//       await repayTx.wait();
+//     }, `${repayAmount} ${asset.symbol} repaid successfully!`);
+//     setRepayAmount("");
+//   };
+
+//   return (
+//     <div className="p-6">
+//       <Modal
+//         open={modalOpen}
+//         title={modalTitle}
+//         message={modalMessage}
+//         onClose={() => setModalOpen(false)}
+//         isError={modalError}
+//       />
+
+//       <h1 className="text-3xl font-bold mb-8">Lending Dashboard</h1>
+
+//       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+//         {/* Deposits Section */}
+//         <div className="bg-white rounded-lg p-6 shadow-md">
+//           <h2 className="text-xl font-semibold mb-4">Your Deposits</h2>
+//           <div className="space-y-3 mb-6">
+//             {assetKeys.map((key) => (
+//               <div key={key} className="flex justify-between items-center">
+//                 <span className="text-gray-600">{ASSETS[key].symbol}:</span>
+//                 <span className="font-medium">
+//                   {deposits[ASSETS[key].symbol] || "0.00"}
+//                 </span>
+//               </div>
+//             ))}
+//           </div>
+
+//           <div className="space-y-4">
+//             <select
+//               className="w-full p-2 border rounded"
+//               value={depositAsset}
+//               onChange={(e) => setDepositAsset(e.target.value as keyof typeof ASSETS)}
+//             >
+//               {assetKeys.map((key) => (
+//                 <option key={key} value={key}>{ASSETS[key].symbol}</option>
+//               ))}
+//             </select>
+//             <input
+//               type="number"
+//               className="w-full p-2 border rounded"
+//               placeholder="Amount"
+//               value={depositAmount}
+//               onChange={(e) => setDepositAmount(e.target.value)}
+//             />
+//             <Button
+//               onClick={handleDeposit}
+//               disabled={!depositAmount || loading}
+//               className="w-full"
+//             >
+//               Deposit
+//             </Button>
+//           </div>
+//         </div>
+
+//         {/* Borrows Section */}
+//         <div className="bg-white rounded-lg p-6 shadow-md">
+//           <h2 className="text-xl font-semibold mb-4">Your Borrows</h2>
+//           <div className="space-y-3 mb-6">
+//             {assetKeys.map((key) => (
+//               <div key={key} className="flex justify-between items-center">
+//                 <span className="text-gray-600">{ASSETS[key].symbol}:</span>
+//                 <span className="font-medium">
+//                   {borrows[ASSETS[key].symbol] || "0.00"}
+//                 </span>
+//               </div>
+//             ))}
+//             <div className="flex justify-between items-center pt-4 border-t">
+//               <span className="text-gray-600">Health Factor:</span>
+//               <span className="font-medium text-green-600">{healthFactor}</span>
+//             </div>
+//           </div>
+
+//           <div className="space-y-4">
+//             <div className="flex gap-2">
+//               <select
+//                 className="border rounded p-1"
+//                 value={borrowAsset}
+//                 onChange={e => setBorrowAsset(e.target.value as keyof typeof ASSETS)}
+//               >
+//                 {assetKeys.map(k => (
+//                   <option key={k} value={k}>{ASSETS[k].symbol}</option>
+//                 ))}
+//               </select>
+//               <input
+//                 type="number"
+//                 className="border rounded p-1 w-24"
+//                 placeholder="Borrow Amount"
+//                 value={borrowAmount}
+//                 onChange={e => setBorrowAmount(e.target.value)}
+//               />
+//             </div>
+//             <div className="flex gap-2">
+//               <select
+//                 className="border rounded p-1"
+//                 value={collateralAsset}
+//                 onChange={e => setCollateralAsset(e.target.value as keyof typeof ASSETS)}
+//               >
+//                 {assetKeys.map(k => (
+//                   <option key={k} value={k}>{ASSETS[k].symbol}</option>
+//                 ))}
+//               </select>
+//               <input
+//                 type="number"
+//                 className="border rounded p-1 w-24"
+//                 placeholder="Collateral Amount"
+//                 value={collateralAmount}
+//                 onChange={e => setCollateralAmount(e.target.value)}
+//               />
+//               <Button
+//                 type="button"
+//                 onClick={handleApproveCollateral}
+//                 disabled={
+//                   loading ||
+//                   !collateralAmount ||
+//                   BigInt(collateralAllowance || "0") >= parseUnits(collateralAmount || "0", ASSETS[collateralAsset].decimals)
+//                 }
+//               >
+//                 {BigInt(collateralAllowance || "0") >= parseUnits(collateralAmount || "0", ASSETS[collateralAsset].decimals)
+//                   ? "Approved"
+//                   : "Approve Collateral"}
+//               </Button>
+//             </div>
+//             <Button
+//               onClick={handleBorrow}
+//               disabled={
+//                 loading ||
+//                 !borrowAmount ||
+//                 !collateralAmount ||
+//                 BigInt(collateralAllowance || "0") < parseUnits(collateralAmount || "0", ASSETS[collateralAsset].decimals)
+//               }
+//               className="w-full"
+//             >
+//               Borrow
+//             </Button>
+//           </div>
+//         </div>
+//       </div>
+
+//       {/* Withdraw/Repay Section */}
+//       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+//         <div className="bg-white rounded-lg p-6 shadow-md">
+//           <h2 className="text-xl font-semibold mb-4">Withdraw</h2>
+//           <div className="space-y-4">
+//             <select
+//               className="w-full p-2 border rounded"
+//               value={withdrawAsset}
+//               onChange={(e) => setWithdrawAsset(e.target.value as keyof typeof ASSETS)}
+//             >
+//               {assetKeys.map((key) => (
+//                 <option key={key} value={key}>{ASSETS[key].symbol}</option>
+//               ))}
+//             </select>
+//             <input
+//               type="number"
+//               className="w-full p-2 border rounded"
+//               placeholder="Amount"
+//               value={withdrawAmount}
+//               onChange={(e) => setWithdrawAmount(e.target.value)}
+//             />
+//             <Button
+//               onClick={handleWithdraw}
+//               disabled={!withdrawAmount || loading}
+//               className="w-full"
+//             >
+//               Withdraw
+//             </Button>
+//           </div>
+//         </div>
+
+//         <div className="bg-white rounded-lg p-6 shadow-md">
+//           <h2 className="text-xl font-semibold mb-4">Repay</h2>
+//           <div className="space-y-4">
+//             <select
+//               className="w-full p-2 border rounded"
+//               value={repayAsset}
+//               onChange={(e) => setRepayAsset(e.target.value as keyof typeof ASSETS)}
+//             >
+//               {assetKeys.map((key) => (
+//                 <option key={key} value={key}>{ASSETS[key].symbol}</option>
+//               ))}
+//             </select>
+//             <input
+//               type="number"
+//               className="w-full p-2 border rounded"
+//               placeholder="Amount"
+//               value={repayAmount}
+//               onChange={(e) => setRepayAmount(e.target.value)}
+//             />
+//             <Button
+//               onClick={handleRepay}
+//               disabled={!repayAmount || loading}
+//               className="w-full"
+//             >
+//               Repay
+//             </Button>
+//           </div>
+//         </div>
+//       </div>
+//     </div>
+//   );
+// };
+
+// export default Dashboard;
